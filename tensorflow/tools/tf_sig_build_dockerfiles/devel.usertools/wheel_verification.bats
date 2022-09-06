@@ -28,7 +28,7 @@ teardown_file() {
 
 @test "Wheel is manylinux2014 (manylinux_2_17) compliant" {
     python3 -m auditwheel show "$TF_WHEEL" > audit.txt
-    grep --quiet 'This constrains the platform tag to "manylinux_2_17_x86_64"' audit.txt
+    grep --quiet -zoP 'is consistent with the following platform tag:\n"manylinux_2_17_(aarch|x86_)64"\.' audit.txt
 }
 
 @test "Wheel conforms to upstream size limitations" {
@@ -54,10 +54,12 @@ teardown_file() {
 # Note: this runs before the tests further down the file, so TF is installed in
 # the venv and the venv is active when those tests run. The venv gets cleaned
 # up in teardown_file() above.
+# Do not allow building of grpcio, this is attempted on aarch64 and fails even
+# though there is a binary install available.
 @test "Wheel is installable" {
     python3 -m venv /tf/venv
     source /tf/venv/bin/activate
-    python3 -m pip install "$TF_WHEEL"
+    python3 -m pip install --only-binary grpcio "$TF_WHEEL"
 }
 
 @test "TensorFlow is importable" {

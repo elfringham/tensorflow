@@ -30,3 +30,6 @@ unar
 wget
 xz-utils
 cpio
+gawk
+texinfo
+gettext

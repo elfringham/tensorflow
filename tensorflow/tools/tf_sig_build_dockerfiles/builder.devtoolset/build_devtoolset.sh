@@ -19,6 +19,7 @@
 
 VERSION="$1"
 TARGET="$2"
+TARGET_ARCH="$3"
 
 case "${VERSION}" in
 devtoolset-7)
@@ -30,7 +31,7 @@ devtoolset-9)
   LIBSTDCXX_ABI="new"
   ;;
 *)
-  echo "Usage: $0 {devtoolset-7|devtoolset-9} <target-directory>"
+  echo "Usage: $0 {devtoolset-7|devtoolset-9} <target-directory> <arch>"
   echo "Use 'devtoolset-7' to build a manylinux2010 compatible toolchain or 'devtoolset-9' to build a manylinux2014 compatible toolchain"
   exit 1
   ;;
@@ -38,13 +39,34 @@ esac
 
 mkdir -p "${TARGET}"
 
+case "${VERSION}:${TARGET_ARCH}" in
+devtoolset-7:arm64)
+  echo "Not building dt7 on arm64"
+  exit 0
+  ;;
+esac
+
+mkdir -p ${TARGET}/usr/include
+
+# Put the current kernel headers from ubuntu in place.
+ln -s "/usr/include/linux" "${TARGET}/usr/include/linux"
+ln -s "/usr/include/asm-generic" "${TARGET}/usr/include/asm-generic"
+case "${TARGET_ARCH}" in
+amd64)
+  ln -s "/usr/include/x86_64-linux-gnu/asm" "${TARGET}/usr/include/asm"
+  ;;
+arm64)
+  ln -s "/usr/include/aarch64-linux-gnu/asm" "${TARGET}/usr/include/asm"
+  ;;
+esac
+
 # Download glibc's shared and development libraries based on the value of the
 # `VERSION` parameter.
 # Note: 'Templatizing' this and the other conditional branches would require
 # defining several variables (version, os, path) making it difficult to maintain
 # and extend for future modifications.
-case "${VERSION}" in
-devtoolset-7)
+case "${VERSION}:${TARGET_ARCH}" in
+devtoolset-7:amd64)
   # Download binary glibc 2.12 shared library release.
   wget "http://old-releases.ubuntu.com/ubuntu/pool/main/e/eglibc/libc6_2.12.1-0ubuntu6_amd64.deb" && \
       unar "libc6_2.12.1-0ubuntu6_amd64.deb" && \
@@ -56,7 +78,7 @@ devtoolset-7)
       tar -C "${TARGET}" -xvzf "libc6-dev_2.12.1-0ubuntu6_amd64/data.tar.gz" && \
       rm -rf "libc6-dev_2.12.1-0ubuntu6_amd64.deb" "libc6-dev_2.12.1-0ubuntu6_amd64"
   ;;
-devtoolset-9)
+devtoolset-9:amd64)
   # Download binary glibc 2.17 shared library release.
   wget "http://old-releases.ubuntu.com/ubuntu/pool/main/e/eglibc/libc6_2.17-0ubuntu5.1_amd64.deb" && \
       unar "libc6_2.17-0ubuntu5.1_amd64.deb" && \
@@ -68,12 +90,26 @@ devtoolset-9)
       tar -C "${TARGET}" -xvzf "libc6-dev_2.17-0ubuntu5.1_amd64/data.tar.gz" && \
       rm -rf "libc6-dev_2.17-0ubuntu5.1_amd64.deb" "libc6-dev_2.17-0ubuntu5.1_amd64"
   ;;
+devtoolset-9:arm64)
+  mkdir -p glibc-src
+  mkdir -p glibc-build
+  cd glibc-src
+  wget "https://vault.centos.org/centos/7/os/Source/SPackages/glibc-2.17-317.el7.src.rpm"
+  rpm2cpio "glibc-2.17-317.el7.src.rpm" |cpio -idmv
+  tar -xvzf "glibc-2.17-c758a686.tar.gz" --strip 1
+  tar -xvzf "glibc-2.17-c758a686-releng.tar.gz" --strip 1
+  sed -i '/patch0060/d' glibc.spec
+  /rpm-patch.sh "glibc.spec"
+  rm -f "glibc-2.17-317.el7.src.rpm" "glibc-2.17-c758a686.tar.gz" "glibc-2.17-c758a686-releng.tar.gz"
+  patch -p1 < /gcc9-fixups.patch
+  patch -p1 < /stringop_trunc.patch
+  cd ../glibc-build
+  ../glibc-src/configure --prefix=/usr --disable-werror
+  make
+  make install DESTDIR=${TARGET}
+  cd ..
+  ;;
 esac
-
-# Put the current kernel headers from ubuntu in place.
-ln -s "/usr/include/linux" "/${TARGET}/usr/include/linux"
-ln -s "/usr/include/asm-generic" "/${TARGET}/usr/include/asm-generic"
-ln -s "/usr/include/x86_64-linux-gnu/asm" "/${TARGET}/usr/include/asm"
 
 # Symlinks in the binary distribution are set up for installation in /usr, we
 # need to fix up all the links to stay within /${TARGET}.
@@ -84,8 +120,8 @@ sed -i '54i#define TCP_USER_TIMEOUT 18' "/${TARGET}/usr/include/netinet/tcp.h"
 
 # Download specific version of libstdc++ shared library based on the value of
 # the `VERSION` parameter
-case "${VERSION}" in
-devtoolset-7)
+case "${VERSION}:${TARGET_ARCH}" in
+devtoolset-7:amd64)
   # Download binary libstdc++ 4.4 release we are going to link against.
   # We only need the shared library, as we're going to develop against the
   # libstdc++ provided by devtoolset.
@@ -94,12 +130,19 @@ devtoolset-7)
       tar -C "/${TARGET}" -xvzf "libstdc++6_4.4.3-4ubuntu5_amd64/data.tar.gz" "./usr/lib/libstdc++.so.6.0.13" && \
       rm -rf "libstdc++6_4.4.3-4ubuntu5_amd64.deb" "libstdc++6_4.4.3-4ubuntu5_amd64"
   ;;
-devtoolset-9)
+devtoolset-9:amd64)
   # Download binary libstdc++ 4.8 shared library release
   wget "http://old-releases.ubuntu.com/ubuntu/pool/main/g/gcc-4.8/libstdc++6_4.8.1-10ubuntu8_amd64.deb" && \
       unar "libstdc++6_4.8.1-10ubuntu8_amd64.deb" && \
       tar -C "/${TARGET}" -xvzf "libstdc++6_4.8.1-10ubuntu8_amd64/data.tar.gz" "./usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.18"  && \
       rm -rf "libstdc++6_4.8.1-10ubuntu8_amd64.deb" "libstdc++6_4.8.1-10ubuntu8_amd64"
+  ;;
+devtoolset-9:arm64)
+  # Download binary libstdc++ 4.8 shared library release
+  wget "http://old-releases.ubuntu.com/ubuntu/pool/main/g/gcc-4.8/libstdc++6_4.8.1-10ubuntu8_arm64.deb" && \
+      unar "libstdc++6_4.8.1-10ubuntu8_arm64.deb" && \
+      tar -C "${TARGET}" -xvzf "libstdc++6_4.8.1-10ubuntu8_arm64/data.tar.gz" "./usr/lib/aarch64-linux-gnu/libstdc++.so.6.0.18"  && \
+      rm -rf "libstdc++6_4.8.1-10ubuntu8_arm64.deb" "libstdc++6_4.8.1-10ubuntu8_arm64"
   ;;
 esac
 
@@ -129,7 +172,7 @@ mkdir -p "${TARGET}-build"
 cd "${TARGET}-build"
 
 "${TARGET}-src/configure" \
-      --prefix=/"${TARGET}/usr" \
+      --prefix="${TARGET}/usr" \
       --with-sysroot="/${TARGET}" \
       --disable-bootstrap \
       --disable-libmpx \
@@ -150,7 +193,6 @@ cd "${TARGET}-build"
       --with-default-libstdcxx-abi=${LIBSTDCXX_ABI} \
       --with-gcc-major-version-only \
       --with-linker-hash-style="gnu" \
-      --with-tune="generic" \
       && \
     make -j 42 && \
     make install
@@ -158,8 +200,8 @@ cd "${TARGET}-build"
 
 # Create the devtoolset libstdc++ linkerscript that links dynamically against
 # the system libstdc++ 4.4 and provides all other symbols statically.
-case "${VERSION}" in
-devtoolset-7)
+case "${VERSION}:${TARGET_ARCH}" in
+devtoolset-7:amd64)
 mv "/${TARGET}/usr/lib/libstdc++.so.${LIBSTDCXX_VERSION}" \
    "/${TARGET}/usr/lib/libstdc++.so.${LIBSTDCXX_VERSION}.backup"
 echo -e "OUTPUT_FORMAT(elf64-x86-64)\nINPUT ( libstdc++.so.6.0.13 -lstdc++_nonshared44 )" \
@@ -167,7 +209,7 @@ echo -e "OUTPUT_FORMAT(elf64-x86-64)\nINPUT ( libstdc++.so.6.0.13 -lstdc++_nonsh
 cp "./x86_64-pc-linux-gnu/libstdc++-v3/src/.libs/libstdc++_nonshared44.a" \
    "/${TARGET}/usr/lib"
   ;;
-devtoolset-9)
+devtoolset-9:amd64)
 # Note that the installation path for libstdc++ here is /${TARGET}/usr/lib64/
 mv "/${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}" \
    "/${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}.backup"
@@ -175,7 +217,16 @@ echo -e "OUTPUT_FORMAT(elf64-x86-64)\nINPUT ( libstdc++.so.6.0.18 -lstdc++_nonsh
    > "/${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}"
 cp "./x86_64-pc-linux-gnu/libstdc++-v3/src/.libs/libstdc++_nonshared44.a" \
    "/${TARGET}/usr/lib64"
-;;
+  ;;
+devtoolset-9:arm64)
+# Note that the installation path for libstdc++ here is /${TARGET}/usr/lib64/
+mv "${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}" \
+   "${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}.backup"
+echo -e "OUTPUT_FORMAT(elf64-littleaarch64)\nINPUT ( libstdc++.so.6.0.18 -lstdc++_nonshared44 )" \
+   > "${TARGET}/usr/lib64/libstdc++.so.${LIBSTDCXX_VERSION}"
+cp "./aarch64-unknown-linux-gnu/libstdc++-v3/src/.libs/libstdc++_nonshared44.a" \
+   "${TARGET}/usr/lib64"
+  ;;
 esac
 
 
@@ -184,8 +235,19 @@ esac
 # system gcc paths that we do not want to find.
 # TODO(klimek): Automate linking in all non-gcc / non-kernel include
 # directories.
-mkdir -p "/${TARGET}/usr/include/x86_64-linux-gnu"
-PYTHON_VERSIONS=("python3.7m" "python3.8" "python3.9" "python3.10")
-for v in "${PYTHON_VERSIONS[@]}"; do
-  ln -s "/usr/local/include/${v}" "/${TARGET}/usr/include/x86_64-linux-gnu/${v}"
-done
+case "${TARGET_ARCH}" in
+amd64)
+  mkdir -p "/${TARGET}/usr/include/x86_64-linux-gnu"
+  PYTHON_VERSIONS=("python3.7m" "python3.8" "python3.9" "python3.10")
+  for v in "${PYTHON_VERSIONS[@]}"; do
+    ln -s "/usr/local/include/${v}" "/${TARGET}/usr/include/x86_64-linux-gnu/${v}"
+  done
+  ;;
+arm64)
+  mkdir -p "${TARGET}/usr/include/aarch64-linux-gnu"
+  PYTHON_VERSIONS=("python3.7m" "python3.8" "python3.9" "python3.10")
+  for v in "${PYTHON_VERSIONS[@]}"; do
+    ln -s "/usr/local/include/${v}" "${TARGET}/usr/include/aarch64-linux-gnu/${v}"
+  done
+  ;;
+esac

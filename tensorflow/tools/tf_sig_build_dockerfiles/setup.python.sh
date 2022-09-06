@@ -21,8 +21,10 @@ set -xe
 
 source ~/.bashrc
 VERSION=$1
-REQUIREMENTS=$2
+TARGET=$2
+REQUIREMENTS=$3
 
+add-apt-repository ppa:deadsnakes/ppa
 # Install Python packages for this container's version
 cat >pythons.txt <<EOF
 $VERSION
@@ -32,15 +34,30 @@ $VERSION-distutils
 EOF
 /setup.packages.sh pythons.txt
 
-# Re-link pyconfig.h from x86_64-linux-gnu into the devtoolset directory
-# for any Python version present
-pushd /usr/include/x86_64-linux-gnu
-for f in $(ls | grep python); do
-  # set up symlink for devtoolset-9
-  rm -f /dt9/usr/include/x86_64-linux-gnu/$f
-  ln -s /usr/include/x86_64-linux-gnu/$f /dt9/usr/include/x86_64-linux-gnu/$f
-done
-popd
+case "${TARGET}" in
+amd64)
+  # Re-link pyconfig.h from x86_64-linux-gnu into the devtoolset directory
+  # for any Python version present
+  pushd /usr/include/x86_64-linux-gnu
+  for f in $(ls | grep python); do
+    # set up symlink for devtoolset-9
+    rm -f /dt9/usr/include/x86_64-linux-gnu/$f
+    ln -s /usr/include/x86_64-linux-gnu/$f /dt9/usr/include/x86_64-linux-gnu/$f
+  done
+  popd
+  ;;
+arm64)
+  # Re-link pyconfig.h from aarch64-linux-gnu into the devtoolset directory
+  # for any Python version present
+  pushd /usr/include/aarch64-linux-gnu
+  for f in $(ls | grep python); do
+    # set up symlink for devtoolset-9
+    rm -f /dt9/usr/include/aarch64-linux-gnu/$f
+    ln -s /usr/include/aarch64-linux-gnu/$f /dt9/usr/include/aarch64-linux-gnu/$f
+  done
+  popd
+  ;;
+esac
 
 # Setup links for TensorFlow to compile.
 # Referenced in devel.usertools/*.bazelrc
